@@ -5,8 +5,8 @@
 
   outputs = { self, ... }: {
     homeManagerModules = {
-      npm-globals = import ./module.nix;
-      default = self.homeManagerModules.npm-globals;
+      harnix = import ./module.nix;
+      default = self.homeManagerModules.harnix;
     };
 
     # Alias used by some projects (e.g. catppuccin/nix)

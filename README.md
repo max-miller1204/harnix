@@ -1,4 +1,4 @@
-# nix-npm-globals
+# harnix
 
 Declarative npm and bun global package management for [Home Manager](https://github.com/nix-community/home-manager).
 
@@ -23,7 +23,7 @@ Declare your npm/bun globals in Nix. They get installed (and removed) automatica
 {
   inputs = {
     # ...your existing inputs...
-    nix-npm-globals.url = "github:max-miller1204/nix-npm-globals";
+    harnix.url = "github:max-miller1204/harnix";
   };
 }
 ```
@@ -34,9 +34,9 @@ Declare your npm/bun globals in Nix. They get installed (and removed) automatica
 
 ```nix
 { inputs, ... }: {
-  imports = [ inputs.nix-npm-globals.homeManagerModules.default ];
+  imports = [ inputs.harnix.homeManagerModules.default ];
 
-  programs.npm-globals = {
+  programs.harnix = {
     enable = true;
     npmPackages = [
       "@anthropic-ai/claude-code"
@@ -56,9 +56,9 @@ Declare your npm/bun globals in Nix. They get installed (and removed) automatica
 # In your NixOS configuration where home-manager is set up
 { inputs, ... }: {
   home-manager.users.youruser = {
-    imports = [ inputs.nix-npm-globals.homeManagerModules.default ];
+    imports = [ inputs.harnix.homeManagerModules.default ];
 
-    programs.npm-globals = {
+    programs.harnix = {
       enable = true;
       npmPackages = [
         "@anthropic-ai/claude-code"
@@ -105,7 +105,7 @@ On each activation (switch), two scripts run:
 1. **`syncNpmGlobals`** — compares `npm list -g --json` against your declared packages. Installs missing ones, removes undeclared ones.
 2. **`syncBunGlobals`** — reads `~/.bun/install/global/node_modules` to find installed packages (bun has no `pm ls -g` command). Same install/remove logic.
 
-Package lists are written as JSON manifests to `~/.config/npm-globals/` and diffed with `jq`. All tool paths are fully-qualified Nix store paths — no implicit `$PATH` dependencies.
+Package lists are written as JSON manifests to `~/.config/harnix/` and diffed with `jq`. All tool paths are fully-qualified Nix store paths — no implicit `$PATH` dependencies.
 
 ## Version Pinning
 
@@ -125,7 +125,7 @@ The version specifier is passed directly to `npm install -g` / `bun add -g`. Rec
 If you only need npm:
 
 ```nix
-programs.npm-globals = {
+programs.harnix = {
   enable = true;
   enableBun = false;
   npmPackages = [ "some-tool" ];
@@ -134,18 +134,26 @@ programs.npm-globals = {
 
 This skips bun installation and the bun sync activation script entirely.
 
+## Shell Support
+
+**Fish**: Handled automatically. If `programs.fish.enable = true` in your Home Manager config, harnix adds `fish_add_path` lines to your fish shell init. No extra setup needed.
+
+**Bash / Zsh**: PATH is added via `home.sessionPath`, which Home Manager writes into `hm-session-vars.sh`. This is sourced on login, so you may need to open a new terminal or re-login after your first `switch`.
+
+> **Why the special fish handling?** Fish manages PATH separately from environment variables. `home.sessionPath` sets PATH in `hm-session-vars.sh`, which is sourced once at login — but fish can lose those additions. `fish_add_path` is idempotent and runs every interactive shell, so the PATH is always correct.
+
 ## Using with den
 
 If you use the [den](https://github.com/vic/den) framework, create an aspect:
 
 ```nix
-# modules/aspects/npm-globals.nix
+# modules/aspects/harnix.nix
 { inputs, ... }: {
-  den.aspects.npm-globals = {
+  den.aspects.harnix = {
     homeManager = { ... }: {
-      imports = [ inputs.nix-npm-globals.homeManagerModules.default ];
+      imports = [ inputs.harnix.homeManagerModules.default ];
 
-      programs.npm-globals = {
+      programs.harnix = {
         enable = true;
         npmPackages = [
           # your packages here
@@ -163,7 +171,7 @@ Then include it in your user aspect:
 { ... }: {
   den.aspects.your-user = {
     includes = [
-      den.aspects.npm-globals
+      den.aspects.harnix
     ];
   };
 }

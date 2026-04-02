@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  cfg = config.programs.npm-globals;
+  cfg = config.programs.harnix;
 
   # Strip version specifier: "@scope/pkg@1.0" → "@scope/pkg", "pkg@1.0" → "pkg"
   stripVersion = spec:
@@ -22,7 +22,7 @@ let
 
 in {
 
-  options.programs.npm-globals = {
+  options.programs.harnix = {
     enable = lib.mkEnableOption "declarative npm and bun global package management";
 
     npmPackages = lib.mkOption {
@@ -119,15 +119,24 @@ in {
       [ "${cfg.npmPrefix}/bin" ]
       ++ lib.optional cfg.enableBun cfg.bunBinDir;
 
+    # fish_add_path is idempotent and persists — needed because fish
+    # doesn't reliably pick up home.sessionPath from hm-session-vars.
+    programs.fish.interactiveShellInit = lib.mkIf config.programs.fish.enable
+      (let
+        paths = [ "${cfg.npmPrefix}/bin" ]
+          ++ lib.optional cfg.enableBun cfg.bunBinDir;
+      in lib.concatMapStringsSep "\n"
+        (p: "fish_add_path --prepend ${p}") paths);
+
     # ── Declared package manifests (read by activation) ─────
-    home.file.".config/npm-globals/npm-names.json".text =
+    home.file.".config/harnix/npm-names.json".text =
       builtins.toJSON npmGlobalNames;
-    home.file.".config/npm-globals/npm-specs.json".text =
+    home.file.".config/harnix/npm-specs.json".text =
       builtins.toJSON cfg.npmPackages;
-    home.file.".config/npm-globals/bun-names.json" = lib.mkIf cfg.enableBun {
+    home.file.".config/harnix/bun-names.json" = lib.mkIf cfg.enableBun {
       text = builtins.toJSON bunGlobalNames;
     };
-    home.file.".config/npm-globals/bun-specs.json" = lib.mkIf cfg.enableBun {
+    home.file.".config/harnix/bun-specs.json" = lib.mkIf cfg.enableBun {
       text = builtins.toJSON cfg.bunPackages;
     };
 
@@ -135,12 +144,12 @@ in {
     home.activation.syncNpmGlobals =
       config.lib.dag.entryAfter [ "writeBoundary" ] ''
         NPM_PREFIX="${cfg.npmPrefix}"
-        DECLARED="$HOME/.config/npm-globals/npm-names.json"
-        SPECS="$HOME/.config/npm-globals/npm-specs.json"
+        DECLARED="$HOME/.config/harnix/npm-names.json"
+        SPECS="$HOME/.config/harnix/npm-specs.json"
 
         $DRY_RUN_CMD mkdir -p "$NPM_PREFIX"
 
-        echo "npm-globals: Syncing npm global packages..."
+        echo "harnix: Syncing npm global packages..."
 
         # Currently installed package names (exclude builtins: npm, corepack)
         INSTALLED=$(${npm} --prefix="$NPM_PREFIX" list -g --depth=0 --json 2>/dev/null \
@@ -170,28 +179,28 @@ in {
 
         if [ -n "$TO_INSTALL" ]; then
           echo "$TO_INSTALL" | while IFS= read -r pkg; do
-            echo "npm-globals: Installing $pkg"
+            echo "harnix: Installing $pkg"
             $DRY_RUN_CMD ${npm} --prefix="$NPM_PREFIX" install -g "$pkg" \
-              || echo "npm-globals: WARNING: Failed to install $pkg"
+              || echo "harnix: WARNING: Failed to install $pkg"
           done
         fi
 
         if [ -n "$TO_REMOVE" ]; then
           echo "$TO_REMOVE" | while IFS= read -r pkg; do
-            echo "npm-globals: Removing $pkg"
+            echo "harnix: Removing $pkg"
             $DRY_RUN_CMD ${npm} --prefix="$NPM_PREFIX" uninstall -g "$pkg" \
-              || echo "npm-globals: WARNING: Failed to remove $pkg"
+              || echo "harnix: WARNING: Failed to remove $pkg"
           done
         fi
 
-        echo "npm-globals: npm sync complete."
+        echo "harnix: npm sync complete."
       '';
 
     # ── Activation: sync bun globals ────────────────────────
     home.activation.syncBunGlobals = lib.mkIf cfg.enableBun
       (config.lib.dag.entryAfter [ "writeBoundary" ] ''
-        DECLARED="$HOME/.config/npm-globals/bun-names.json"
-        SPECS="$HOME/.config/npm-globals/bun-specs.json"
+        DECLARED="$HOME/.config/harnix/bun-names.json"
+        SPECS="$HOME/.config/harnix/bun-specs.json"
         BUN_GLOBAL_DIR="${cfg.bunGlobalDir}"
 
         DECLARED_COUNT=$(${jq} 'length' "$DECLARED")
@@ -217,9 +226,9 @@ in {
         fi
 
         if [ "$DECLARED_COUNT" -eq 0 ] && [ "$INSTALLED" = "[]" ]; then
-          echo "npm-globals: No bun globals declared, skipping."
+          echo "harnix: No bun globals declared, skipping."
         else
-          echo "npm-globals: Syncing bun global packages..."
+          echo "harnix: Syncing bun global packages..."
 
           TO_INSTALL=$(${jq} -n \
             --argjson declared "$(cat "$DECLARED")" \
@@ -241,21 +250,21 @@ in {
 
           if [ -n "$TO_INSTALL" ]; then
             echo "$TO_INSTALL" | while IFS= read -r pkg; do
-              echo "npm-globals: [bun] Installing $pkg"
+              echo "harnix: [bun] Installing $pkg"
               $DRY_RUN_CMD ${bun} add -g "$pkg" \
-                || echo "npm-globals: WARNING: Failed to install $pkg"
+                || echo "harnix: WARNING: Failed to install $pkg"
             done
           fi
 
           if [ -n "$TO_REMOVE" ]; then
             echo "$TO_REMOVE" | while IFS= read -r pkg; do
-              echo "npm-globals: [bun] Removing $pkg"
+              echo "harnix: [bun] Removing $pkg"
               $DRY_RUN_CMD ${bun} remove -g "$pkg" \
-                || echo "npm-globals: WARNING: Failed to remove $pkg"
+                || echo "harnix: WARNING: Failed to remove $pkg"
             done
           fi
 
-          echo "npm-globals: bun sync complete."
+          echo "harnix: bun sync complete."
         fi
       '');
   };
