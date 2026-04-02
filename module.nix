@@ -143,6 +143,9 @@ in {
     # ── Activation: sync npm globals ────────────────────────
     home.activation.syncNpmGlobals =
       config.lib.dag.entryAfter [ "writeBoundary" ] ''
+        # Ensure node/npm are on PATH for postinstall scripts spawned by npm
+        export PATH="${cfg.nodePackage}/bin:${pkgs.git}/bin:$PATH"
+
         NPM_PREFIX="${cfg.npmPrefix}"
         DECLARED="$HOME/.config/harnix/npm-names.json"
         SPECS="$HOME/.config/harnix/npm-specs.json"
@@ -199,6 +202,9 @@ in {
     # ── Activation: sync bun globals ────────────────────────
     home.activation.syncBunGlobals = lib.mkIf cfg.enableBun
       (config.lib.dag.entryAfter [ "writeBoundary" ] ''
+        # Ensure bun/node are on PATH for postinstall scripts
+        export PATH="${cfg.bunPackage}/bin:${cfg.nodePackage}/bin:${pkgs.git}/bin:$PATH"
+
         DECLARED="$HOME/.config/harnix/bun-names.json"
         SPECS="$HOME/.config/harnix/bun-specs.json"
         BUN_GLOBAL_DIR="${cfg.bunGlobalDir}"
