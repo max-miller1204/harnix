@@ -81,7 +81,7 @@ sudo nixos-rebuild switch
 darwin-rebuild switch
 ```
 
-That's it. Packages in your lists get installed; packages you remove get uninstalled.
+That's it. Unpinned packages refresh on each activation, pinned packages update when you change the declared spec, and packages you remove get uninstalled.
 
 ## Options
 
@@ -102,23 +102,35 @@ That's it. Packages in your lists get installed; packages you remove get uninsta
 
 On each activation (switch), two scripts run:
 
-1. **`syncNpmGlobals`** — compares `npm list -g --json` against your declared packages. Installs missing ones, removes undeclared ones.
-2. **`syncBunGlobals`** — reads `~/.bun/install/global/node_modules` to find installed packages (bun has no `pm ls -g` command). Same install/remove logic.
+1. **`syncNpmGlobals`** — compares `npm list -g --json` against your declared packages. Unpinned specs are refreshed every activation, pinned specs are refreshed when the declared spec changes, and undeclared packages are removed.
+2. **`syncBunGlobals`** — reads `~/.bun/install/global/node_modules` to find installed packages (bun has no `pm ls -g` command). Same refresh/remove logic.
 
-Package lists are written as JSON manifests to `~/.config/harnix/` and diffed with `jq`. All tool paths are fully-qualified Nix store paths — no implicit `$PATH` dependencies.
+Package lists are written as JSON manifests to `~/.config/harnix/` and diffed with `jq`. Harnix also records the last applied pinned specs there so it can detect when a pinned package declaration changed. All tool paths are fully-qualified Nix store paths — no implicit `$PATH` dependencies.
 
 ## Version Pinning
 
 ```nix
 npmPackages = [
-  "pkg"              # latest
-  "pkg@1.2.3"        # exact version
-  "@scope/pkg"       # scoped, latest
-  "@scope/pkg@^2.0"  # scoped with range
+  "pkg"              # refreshed to latest on each activation
+  "pkg@1.2.3"        # held until you change the spec
+  "@scope/pkg"       # scoped, refreshed to latest on each activation
+  "@scope/pkg@^2.0"  # held until you change the spec
 ];
 ```
 
-The version specifier is passed directly to `npm install -g` / `bun add -g`. Reconciliation uses only the package name (without version) to determine what's already installed.
+The version specifier is passed directly to `npm install -g` / `bun add -g`. Reconciliation uses the package name (without version) as the package identity, while tracking the last applied pinned spec to detect declared version changes.
+
+## When updates happen
+
+Updates happen during activation:
+
+```sh
+home-manager switch
+sudo nixos-rebuild switch
+darwin-rebuild switch
+```
+
+`nix flake update` only refreshes flake inputs and does not run harnix's activation scripts, so it does not apply npm/bun package updates by itself.
 
 ## Disabling Bun
 
@@ -141,6 +153,20 @@ This skips bun installation and the bun sync activation script entirely.
 **Bash / Zsh**: PATH is added via `home.sessionPath`, which Home Manager writes into `hm-session-vars.sh`. This is sourced on login, so you may need to open a new terminal or re-login after your first `switch`.
 
 > **Why the special fish handling?** Fish manages PATH separately from environment variables. `home.sessionPath` sets PATH in `hm-session-vars.sh`, which is sourced once at login — but fish can lose those additions. `fish_add_path` is idempotent and runs every interactive shell, so the PATH is always correct.
+
+## NixOS note for prebuilt binaries
+
+Some npm or bun packages ship generic dynamically linked Linux binaries instead of pure JavaScript entrypoints. On NixOS, those binaries may fail to start unless you enable `nix-ld`.
+
+Example NixOS configuration:
+
+```nix
+{
+  programs.nix-ld.enable = true;
+}
+```
+
+If a package fails with an error about dynamically linked executables or links to the NixOS `stub-ld` documentation, this is usually the fix.
 
 ## Using with den
 

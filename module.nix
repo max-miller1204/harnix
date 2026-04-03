@@ -14,6 +14,16 @@ let
 
   npmGlobalNames = map stripVersion cfg.npmPackages;
   bunGlobalNames = map stripVersion cfg.bunPackages;
+  npmPackageRecords = map (spec: {
+    name = stripVersion spec;
+    inherit spec;
+    pinned = spec != stripVersion spec;
+  }) cfg.npmPackages;
+  bunPackageRecords = map (spec: {
+    name = stripVersion spec;
+    inherit spec;
+    pinned = spec != stripVersion spec;
+  }) cfg.bunPackages;
 
   npm = "${cfg.nodePackage}/bin/npm";
   jq  = "${pkgs.jq}/bin/jq";
@@ -133,11 +143,16 @@ in {
       builtins.toJSON npmGlobalNames;
     home.file.".config/harnix/npm-specs.json".text =
       builtins.toJSON cfg.npmPackages;
+    home.file.".config/harnix/npm-packages.json".text =
+      builtins.toJSON npmPackageRecords;
     home.file.".config/harnix/bun-names.json" = lib.mkIf cfg.enableBun {
       text = builtins.toJSON bunGlobalNames;
     };
     home.file.".config/harnix/bun-specs.json" = lib.mkIf cfg.enableBun {
       text = builtins.toJSON cfg.bunPackages;
+    };
+    home.file.".config/harnix/bun-packages.json" = lib.mkIf cfg.enableBun {
+      text = builtins.toJSON bunPackageRecords;
     };
 
     # ── Activation: sync npm globals ────────────────────────
@@ -149,29 +164,43 @@ in {
         NPM_PREFIX="${cfg.npmPrefix}"
         DECLARED="$HOME/.config/harnix/npm-names.json"
         SPECS="$HOME/.config/harnix/npm-specs.json"
+        PACKAGES="$HOME/.config/harnix/npm-packages.json"
+        LAST_SPECS="$HOME/.config/harnix/npm-last-specs.json"
 
         $DRY_RUN_CMD mkdir -p "$NPM_PREFIX"
 
         echo "harnix: Syncing npm global packages..."
+        SYNC_FAILED=0
+
+        if [ -f "$LAST_SPECS" ]; then
+          LAST_SPEC_MAP="$(cat "$LAST_SPECS")"
+        else
+          LAST_SPEC_MAP='{}'
+        fi
 
         # Currently installed package names (exclude builtins: npm, corepack)
         INSTALLED=$(${npm} --prefix="$NPM_PREFIX" list -g --depth=0 --json 2>/dev/null \
           | ${jq} -r '[.dependencies // {} | keys[] | select(. != "npm" and . != "corepack")]') \
           || INSTALLED="[]"
 
-        # Packages to install: names in declared but not in installed
-        # Map back to full install specs (with version pins) for npm install
+        # Upsert rule:
+        # - unpinned specs refresh on every activation
+        # - pinned specs refresh when the declared spec changes
+        # - missing packages are installed
         TO_INSTALL=$(${jq} -n \
-          --argjson declared "$(cat "$DECLARED")" \
+          --argjson packages "$(cat "$PACKAGES")" \
           --argjson installed "$INSTALLED" \
-          --argjson specs "$(cat "$SPECS")" \
+          --argjson last "$LAST_SPEC_MAP" \
           '
-            ($declared - $installed) as $missing |
-            if ($missing | length) == 0 then empty
-            else
-              $missing[] as $name |
-              ($specs[] | select(. == $name or startswith($name + "@")))
-            end
+            $packages
+            | map(select(
+                (.name as $name |
+                  ($installed | index($name) | not)
+                  or (.pinned | not)
+                  or (($last[$name] // null) != .spec))
+              ))
+            | map(.spec)
+            | unique[]
           ' -r) || true
 
         # Packages to remove: installed but not in declared list
@@ -181,19 +210,32 @@ in {
           '($installed - $declared) | .[]' -r) || true
 
         if [ -n "$TO_INSTALL" ]; then
-          echo "$TO_INSTALL" | while IFS= read -r pkg; do
+          while IFS= read -r pkg; do
             echo "harnix: Installing $pkg"
             $DRY_RUN_CMD ${npm} --prefix="$NPM_PREFIX" install -g "$pkg" \
-              || echo "harnix: WARNING: Failed to install $pkg"
-          done
+              || {
+                echo "harnix: WARNING: Failed to install $pkg"
+                SYNC_FAILED=1
+              }
+          done <<< "$TO_INSTALL"
         fi
 
         if [ -n "$TO_REMOVE" ]; then
-          echo "$TO_REMOVE" | while IFS= read -r pkg; do
+          while IFS= read -r pkg; do
             echo "harnix: Removing $pkg"
             $DRY_RUN_CMD ${npm} --prefix="$NPM_PREFIX" uninstall -g "$pkg" \
-              || echo "harnix: WARNING: Failed to remove $pkg"
-          done
+              || {
+                echo "harnix: WARNING: Failed to remove $pkg"
+                SYNC_FAILED=1
+              }
+          done <<< "$TO_REMOVE"
+        fi
+
+        if [ -z "$DRY_RUN_CMD" ] && [ "$SYNC_FAILED" -eq 0 ]; then
+          ${jq} -n \
+            --argjson packages "$(cat "$PACKAGES")" \
+            '$packages | map({ key: .name, value: .spec }) | from_entries' \
+            > "$LAST_SPECS"
         fi
 
         echo "harnix: npm sync complete."
@@ -207,9 +249,17 @@ in {
 
         DECLARED="$HOME/.config/harnix/bun-names.json"
         SPECS="$HOME/.config/harnix/bun-specs.json"
+        PACKAGES="$HOME/.config/harnix/bun-packages.json"
+        LAST_SPECS="$HOME/.config/harnix/bun-last-specs.json"
         BUN_GLOBAL_DIR="${cfg.bunGlobalDir}"
 
         DECLARED_COUNT=$(${jq} 'length' "$DECLARED")
+
+        if [ -f "$LAST_SPECS" ]; then
+          LAST_SPEC_MAP="$(cat "$LAST_SPECS")"
+        else
+          LAST_SPEC_MAP='{}'
+        fi
 
         # Get currently installed bun globals by reading the global node_modules dir.
         # bun has no "bun pm ls -g", so we inspect the filesystem directly.
@@ -235,18 +285,22 @@ in {
           echo "harnix: No bun globals declared, skipping."
         else
           echo "harnix: Syncing bun global packages..."
+          SYNC_FAILED=0
 
           TO_INSTALL=$(${jq} -n \
-            --argjson declared "$(cat "$DECLARED")" \
+            --argjson packages "$(cat "$PACKAGES")" \
             --argjson installed "$INSTALLED" \
-            --argjson specs "$(cat "$SPECS")" \
+            --argjson last "$LAST_SPEC_MAP" \
             '
-              ($declared - $installed) as $missing |
-              if ($missing | length) == 0 then empty
-              else
-                $missing[] as $name |
-                ($specs[] | select(. == $name or startswith($name + "@")))
-              end
+              $packages
+              | map(select(
+                  (.name as $name |
+                    ($installed | index($name) | not)
+                    or (.pinned | not)
+                    or (($last[$name] // null) != .spec))
+                ))
+              | map(.spec)
+              | unique[]
             ' -r) || true
 
           TO_REMOVE=$(${jq} -n \
@@ -255,19 +309,32 @@ in {
             '($installed - $declared) | .[]' -r) || true
 
           if [ -n "$TO_INSTALL" ]; then
-            echo "$TO_INSTALL" | while IFS= read -r pkg; do
+            while IFS= read -r pkg; do
               echo "harnix: [bun] Installing $pkg"
               $DRY_RUN_CMD ${bun} add -g "$pkg" \
-                || echo "harnix: WARNING: Failed to install $pkg"
-            done
+                || {
+                  echo "harnix: WARNING: Failed to install $pkg"
+                  SYNC_FAILED=1
+                }
+            done <<< "$TO_INSTALL"
           fi
 
           if [ -n "$TO_REMOVE" ]; then
-            echo "$TO_REMOVE" | while IFS= read -r pkg; do
+            while IFS= read -r pkg; do
               echo "harnix: [bun] Removing $pkg"
               $DRY_RUN_CMD ${bun} remove -g "$pkg" \
-                || echo "harnix: WARNING: Failed to remove $pkg"
-            done
+                || {
+                  echo "harnix: WARNING: Failed to remove $pkg"
+                  SYNC_FAILED=1
+                }
+            done <<< "$TO_REMOVE"
+          fi
+
+          if [ -z "$DRY_RUN_CMD" ] && [ "$SYNC_FAILED" -eq 0 ]; then
+            ${jq} -n \
+              --argjson packages "$(cat "$PACKAGES")" \
+              '$packages | map({ key: .name, value: .spec }) | from_entries' \
+              > "$LAST_SPECS"
           fi
 
           echo "harnix: bun sync complete."
