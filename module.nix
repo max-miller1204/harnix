@@ -12,17 +12,37 @@ let
       then "@" + builtins.elemAt parts 1
       else builtins.head parts;
 
+  getSpecifier = spec:
+    let
+      parts = lib.splitString "@" spec;
+    in
+      if lib.hasPrefix "@" spec
+      then
+        if builtins.length parts > 2
+        then builtins.elemAt parts 2
+        else null
+      else
+        if builtins.length parts > 1
+        then builtins.elemAt parts 1
+        else null;
+
+  isPinnedSpec = spec:
+    let
+      specifier = getSpecifier spec;
+    in
+      specifier != null && lib.toLower specifier != "latest";
+
   npmGlobalNames = map stripVersion cfg.npmPackages;
   bunGlobalNames = map stripVersion cfg.bunPackages;
   npmPackageRecords = map (spec: {
     name = stripVersion spec;
     inherit spec;
-    pinned = spec != stripVersion spec;
+    pinned = isPinnedSpec spec;
   }) cfg.npmPackages;
   bunPackageRecords = map (spec: {
     name = stripVersion spec;
     inherit spec;
-    pinned = spec != stripVersion spec;
+    pinned = isPinnedSpec spec;
   }) cfg.bunPackages;
 
   npm = "${cfg.nodePackage}/bin/npm";

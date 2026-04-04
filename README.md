@@ -8,7 +8,7 @@ Declare your npm/bun globals in Nix. They get installed (and removed) automatica
 
 - **Declarative** — list packages in your Nix config, done
 - **Full sync** — packages removed from your config get uninstalled automatically
-- **Version pinning** — `"pkg@1.2.3"`, `"@scope/pkg@latest"`
+- **Version pinning** — `"pkg@1.2.3"`, `"@scope/pkg@^2.0"` (`@latest` stays rolling)
 - **npm + bun** — manage both from one place
 - **Non-destructive** — failures on individual packages don't block the rest
 - **Cross-platform** — works on NixOS and macOS (nix-darwin)
@@ -112,13 +112,15 @@ Package lists are written as JSON manifests to `~/.config/harnix/` and diffed wi
 ```nix
 npmPackages = [
   "pkg"              # refreshed to latest on each activation
+  "pkg@latest"       # also refreshed on each activation
   "pkg@1.2.3"        # held until you change the spec
   "@scope/pkg"       # scoped, refreshed to latest on each activation
+  "@scope/pkg@latest"# scoped latest tag, refreshed on each activation
   "@scope/pkg@^2.0"  # held until you change the spec
 ];
 ```
 
-The version specifier is passed directly to `npm install -g` / `bun add -g`. Reconciliation uses the package name (without version) as the package identity, while tracking the last applied pinned spec to detect declared version changes.
+The version specifier is passed directly to `npm install -g` / `bun add -g`. Reconciliation uses the package name (without version) as the package identity, while tracking the last applied pinned spec to detect declared version changes. `@latest` is treated as a rolling tag, so it refreshes on every activation just like an unversioned package.
 
 ## When updates happen
 
