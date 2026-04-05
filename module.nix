@@ -155,7 +155,11 @@ in {
         paths = [ "${cfg.npmPrefix}/bin" ]
           ++ lib.optional cfg.enableBun cfg.bunBinDir;
       in lib.concatMapStringsSep "\n"
-        (p: "fish_add_path --prepend ${p}") paths);
+        (p: ''
+          if not contains -- ${lib.escapeShellArg p} $PATH
+            fish_add_path --prepend ${lib.escapeShellArg p}
+          end
+        '') paths);
 
     # ── Declared package manifests (read by activation) ─────
     home.file.".config/harnix/npm-names.json".text =
