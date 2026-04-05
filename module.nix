@@ -48,7 +48,6 @@ let
   npm = "${cfg.nodePackage}/bin/npm";
   jq  = "${pkgs.jq}/bin/jq";
   bun = "${cfg.bunPackage}/bin/bun";
-  ls  = "${pkgs.coreutils}/bin/ls";
 
 in {
 
@@ -281,22 +280,12 @@ in {
           LAST_SPEC_MAP='{}'
         fi
 
-        # Get currently installed bun globals by reading the global node_modules dir.
-        # bun has no "bun pm ls -g", so we inspect the filesystem directly.
-        if [ -d "$BUN_GLOBAL_DIR/node_modules" ]; then
-          INSTALLED=$(${ls} -1 "$BUN_GLOBAL_DIR/node_modules" 2>/dev/null \
-            | while IFS= read -r entry; do
-                if [ "''${entry#@}" != "$entry" ]; then
-                  # Scoped package: list subdirectories as @scope/pkg
-                  ${ls} -1 "$BUN_GLOBAL_DIR/node_modules/$entry" 2>/dev/null \
-                    | while IFS= read -r sub; do
-                        echo "$entry/$sub"
-                      done
-                elif [ "$entry" != ".bin" ] && [ "$entry" != ".cache" ] && [ "$entry" != ".package-lock.json" ]; then
-                  echo "$entry"
-                fi
-              done \
-            | ${jq} -R 'select(length > 0)' | ${jq} -s '.')
+        # Bun's global node_modules tree contains transitive dependencies, so
+        # treat package.json dependencies as the source of truth for declared
+        # globals. This matches what `bun add -g` writes under bunGlobalDir.
+        if [ -f "$BUN_GLOBAL_DIR/package.json" ]; then
+          INSTALLED=$(${jq} -r '[.dependencies // {} | keys[]]' "$BUN_GLOBAL_DIR/package.json") \
+            || INSTALLED="[]"
         else
           INSTALLED="[]"
         fi

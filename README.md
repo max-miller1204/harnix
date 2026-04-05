@@ -103,7 +103,7 @@ That's it. Unpinned packages refresh on each activation, pinned packages update 
 On each activation (switch), two scripts run:
 
 1. **`syncNpmGlobals`** — compares `npm list -g --json` against your declared packages. Unpinned specs are refreshed every activation, pinned specs are refreshed when the declared spec changes, and undeclared packages are removed.
-2. **`syncBunGlobals`** — reads `~/.bun/install/global/node_modules` to find installed packages (bun has no `pm ls -g` command). Same refresh/remove logic.
+2. **`syncBunGlobals`** — reads `~/.bun/install/global/package.json` to find top-level installed globals (the `node_modules` tree includes transitive dependencies). Same refresh/remove logic.
 
 Package lists are written as JSON manifests to `~/.config/harnix/` and diffed with `jq`. Harnix also records the last applied pinned specs there so it can detect when a pinned package declaration changed. All tool paths are fully-qualified Nix store paths — no implicit `$PATH` dependencies.
 
